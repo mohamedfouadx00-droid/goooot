@@ -1,0 +1,809 @@
+# PROJECT HANDOFF — GYM
+
+## 0. المرحلة الحالية
+
+**Phase: 01F — User Repositories**
+(المراحل السابقة **01A — Project Bootstrap**، **01B — Navigation Foundation**،
+**01C — Dependency Injection Foundation**، **01D — Core User Models**، و
+**01E — Room Database Foundation** مغلقة رسميًا وناجحة عبر GitHub Actions — التفاصيل في
+القسم 7)
+
+---
+
+## 1. نظرة عامة على المشروع
+
+**GYM** هو تطبيق Android مخطط له أن يكون **منتجًا عامًا قابلًا للنشر**، **باللغة العربية
+فقط** (Arabic-only, RTL). الفكرة الأساسية للمنتج الكامل مستقبلًا تعتمد على:
+
+- **User Profile** (ملف المستخدم)
+- **Goal** (الهدف الرياضي/الصحي)
+- **Preferences** (تفضيلات المستخدم)
+
+✅ اعتبارًا من Phase 01D، تم تعريف هذه المحاور الثلاثة كنماذج domain نقية (بدون تخزين، بدون
+UI). ✅ اعتبارًا من Phase 01E، أصبح لهذه النماذج الثلاثة تخزين فعلي عبر Room (انظر القسم 4.9).
+✅ اعتبارًا من Phase 01F، أصبحت هذه النماذج الثلاثة قابلة للوصول عبر طبقة Repositories نظيفة
+(انظر القسم 4.10) تفصل الـ domain عن Room بشكل كامل، وتُحقن عبر Hilt.
+كل ميزة مستقبلية (Workout, Nutrition, Recovery, Home) يجب أن **تقرأ** بياناتها من هذه النماذج
+المركزية عبر طبقة الحقن (Hilt، من 01C) بدلاً من بيانات ثابتة أو مكررة. راجع القسم 4 للتفاصيل
+الكاملة.
+
+---
+
+## 2. Tech Stack
+
+| المكوّن | الإصدار / التفصيل |
+|---|---|
+| اللغة | Kotlin 1.9.24 |
+| UI Toolkit | Jetpack Compose (BOM 2024.09.00) |
+| Navigation | androidx.navigation:navigation-compose:2.7.7 (منذ 01B) |
+| Dependency Injection | Hilt 2.51.1 (منذ 01C) |
+| Persistence | Room 2.6.1 (جديد في 01E) |
+| Android Gradle Plugin (AGP) | 8.5.2 |
+| Gradle | 8.7 (عبر Gradle Wrapper) |
+| Java Toolchain | Java 17 |
+| compileSdk / targetSdk | 34 |
+| minSdk | 24 |
+| Compose Compiler Extension | 1.5.14 |
+
+المشروع لا يزال خاليًا من: DataStore, AppCompat, Material Components الكلاسيكية.
+
+**ملاحظة (01F):** لم تُضَف أي مكتبة جديدة في هذه المرحلة — طبقة الـ Repositories الجديدة تعتمد
+حصريًا على Room وHilt وKotlin Coroutines الموجودة بالفعل منذ 01C/01E. تم فقط رفع `versionName`
+إلى `"0.5.0-phase01f"`.
+
+---
+
+## 3. معمارية التنقل (Navigation Architecture) — من 01B، لم تتغيّر
+
+### 3.1 تعريف الـ Routes
+
+الملف: `app/src/main/java/com/gym/app/navigation/Routes.kt`
+
+`sealed class Routes(val route: String)` مع خمسة routes: `Start, Home, Workout, Progress,
+Settings`. لم يتغيّر شيء هنا في 01C.
+
+### 3.2 AppNavHost
+
+الملف: `app/src/main/java/com/gym/app/navigation/AppNavHost.kt` — لم يتغيّر في 01C.
+`NavHost` مركزي واحد، بداية التنقل `Routes.Start.route`.
+
+### 3.3 مسؤولية MainActivity
+
+الملف: `app/src/main/java/com/gym/app/MainActivity.kt`
+
+لا يزال **نقطة دخول فقط**: يطبّق `GymTheme` ويستدعي `AppNavHost()`. الإضافة الوحيدة في 01C
+هي annotation واحدة: `@AndroidEntryPoint` (مطلوبة من Hilt لتفعيل حقن الاعتماديات داخل
+الـ Activity وأي Composable تابع لها عبر `hiltViewModel()`). لا يوجد أي منطق Feature جديد.
+
+### 3.4 الشاشات (Screens)
+
+كل الشاشات لا تزال شاشات اختبار تنقل تقنية مؤقتة. التعديل الوحيد في 01C هو في
+`StartScreen.kt` (انظر القسم 4.4).
+
+---
+
+## 4. معمارية الحقن (Dependency Injection Architecture) — جديد في 01C
+
+### 4.1 نظرة عامة
+
+تم إضافة أساس Hilt نظيف يهيّئ المشروع لاستقبال Repositories وDatabase وDAOs وDataStore
+وUse Cases لاحقًا، دون تنفيذ أي منها الآن. الهدف الوحيد لهذه المرحلة: إثبات أن السلسلة
+الكاملة تعمل: **Application injection → Activity injection → ViewModel injection**، مع بقاء
+التنقل (01B) يعمل والمشروع قابل للـ build.
+
+### 4.2 Gradle Setup
+
+- **Root** `build.gradle.kts`: أُضيف `id("org.jetbrains.kotlin.kapt") version "1.9.24" apply
+  false` و `id("com.google.dagger.hilt.android") version "2.51.1" apply false`.
+- **App** `app/build.gradle.kts`:
+  - تطبيق البلجنز: `org.jetbrains.kotlin.kapt`, `com.google.dagger.hilt.android`.
+  - Dependencies جديدة:
+    - `com.google.dagger:hilt-android:2.51.1`
+    - `kapt("com.google.dagger:hilt-android-compiler:2.51.1")`
+    - `androidx.hilt:hilt-navigation-compose:1.2.0` (لدعم `hiltViewModel()` مع Navigation
+      Compose)
+    - `androidx.lifecycle:lifecycle-runtime-compose:2.8.4` (لدعم
+      `collectAsStateWithLifecycle()`)
+  - إضافة block: `kapt { correctErrorTypes = true }` (مطلوب من Hilt).
+  - `versionName` تم رفعه إلى `"0.3.0-phase01c"`.
+
+**سبب اختيار Hilt 2.51.1 تحديدًا:** آخر خط إصدارات Hilt المبني بشكل كامل حول `kapt` (وليس
+K2/KSP فقط)، وهو متوافق تمامًا مع Kotlin 1.9.24 و AGP 8.5.2 الحاليين — لا حاجة لأي ترقية غير
+متعلقة بهذه المرحلة.
+
+### 4.3 Application Class
+
+الملف: `app/src/main/java/com/gym/app/GymApplication.kt` (جديد)
+
+```kotlin
+@HiltAndroidApp
+class GymApplication : Application()
+```
+
+مسجّلة في `AndroidManifest.xml` عبر `android:name=".GymApplication"` على عنصر
+`<application>`.
+
+### 4.4 الاعتمادية التقنية (Technical Dependency)
+
+الملف: `app/src/main/java/com/gym/app/core/di/AppInfoProvider.kt` (جديد)
+
+```kotlin
+@Singleton
+class AppInfoProvider @Inject constructor() {
+    fun getApplicationName(): String = "GYM"
+    fun getTechnicalLabel(): String = "phase-01c-di-foundation"
+}
+```
+
+لا تحتوي أي بيانات مستخدم أو ملف شخصي أو هدف أو وزن ثابت — فقط تسميات تقنية داخلية. **لم
+يُنشأ أي Hilt Module لها**: بما أنها class ملموسة (concrete) بـ constructor مُعلَّم بـ
+`@Inject` وبدون interface، يستطيع Hilt بناءها مباشرة دون أي module. إنشاء module هنا كان
+سيمثّل تجريدًا (abstraction) غير ضروري.
+
+### 4.5 ViewModel للتحقق
+
+الملف: `app/src/main/java/com/gym/app/ui/screens/StartViewModel.kt` (جديد)
+
+```kotlin
+@HiltViewModel
+class StartViewModel @Inject constructor(
+    appInfoProvider: AppInfoProvider
+) : ViewModel() {
+    val uiState: StateFlow<StartUiState> = ...
+}
+```
+
+يستقبل `AppInfoProvider` عبر الـ constructor فقط ليثبت أن حقن ViewModel يعمل. لا يحتوي أي
+منطق ميزة حقيقي — فقط `StateFlow<StartUiState>` بسيط غير قابل للتغيير من الخارج.
+
+### 4.6 الربط بالشاشة التقنية
+
+الملف: `app/src/main/java/com/gym/app/ui/screens/StartScreen.kt` (مُعدَّل)
+
+تمت إضافة:
+```kotlin
+viewModel: StartViewModel = hiltViewModel()
+val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+```
+
+وسطر نص تقني صغير (سلسلة عربية جديدة `start_di_status` في `strings.xml`) يظهر فقط عندما
+تكون حالة الحقن جاهزة، لإثبات أن البيانات تصل فعليًا من الـ ViewModel المحقون. لا يوجد أي
+تحويل لبقية الشاشات إلى ViewModels — تمامًا كما طُلب.
+
+### 4.7 كيف يعمل الحقن حاليًا (ملخص السلسلة الكاملة)
+
+```
+GymApplication (@HiltAndroidApp)
+        ↓ ينشئ SingletonComponent
+MainActivity (@AndroidEntryPoint)
+        ↓ hiltViewModel() داخل StartScreen
+StartViewModel (@HiltViewModel)
+        ↓ يستقبل عبر الـ constructor
+AppInfoProvider (@Singleton, @Inject constructor)
+```
+
+لا Repositories، لا Database، لا Use Cases بعد — البنية جاهزة لاستقبالها لاحقًا فقط.
+
+---
+
+## 4.8 نماذج المستخدم المركزية (Core User Models) — جديد في 01D
+
+### 4.8.1 نظرة عامة
+
+تم إضافة الحزمة `app/src/main/java/com/gym/app/domain/model/` وتحتوي على النماذج المركزية
+الثلاثة (User Profile + Goal + Preferences) بالإضافة إلى كل الأنواع المساعدة (enums وvalue
+types) التي تحتاجها. هذه المرحلة **domain فقط**: لا تخزين (Room/DataStore)، لا UI، لا أي ربط
+بـ Hilt بعد. الهدف الوحيد: تعريف الشكل النهائي للبيانات التي ستُبنى حولها كل الميزات المستقبلية.
+
+### 4.8.2 الملفات والمسارات
+
+كل الملفات التالية جديدة، داخل `app/src/main/java/com/gym/app/domain/model/`:
+
+```
+UserProfile.kt          — النموذج المركزي لملف المستخدم
+Goal.kt                 — النموذج المركزي للهدف
+UserPreferences.kt       — النموذج المركزي للتفضيلات (يحتوي أيضًا على ReminderPreferences)
+Gender.kt                — enum
+ExperienceLevel.kt       — enum
+ActivityLevel.kt         — enum
+PrimaryGoal.kt           — enum
+WorkoutLocation.kt       — enum
+BudgetLevel.kt           — enum
+UnitSystem.kt            — enum
+Weekday.kt               — enum (لأيام التمرين المفضلة/أيام الراحة)
+TimeOfDay.kt             — value type (وقت اليوم: ساعة + دقيقة)، بديل مستقل عن أي إطار عمل
+                           لتمثيل الأوقات (preferredWorkoutTime, sleepTime, wakeTime)
+```
+
+### 4.8.3 UserProfile
+
+`data class UserProfile` يحتوي: `userId`, `name`, `age`, `gender` (nullable، لأنه مطلوب فقط
+لبعض الحسابات المستقبلية)، `heightCm`, `currentWeightKg`, `experienceLevel`, `activityLevel`.
+الطول والوزن يُخزَّنان بوحدات metric دائمًا كمصدر حقيقة داخلي واحد — تفضيل الوحدات
+(`UserPreferences.unitSystem`) يؤثر فقط على طريقة **العرض** مستقبلًا، وليس على التخزين هنا.
+
+يحتوي على تحقق (`init` block + `require`) لـ: `userId`/`name` غير فارغين، عمر ضمن مدى منطقي
+(10–100)، طول ووزن موجبين وواقعيين. لا توجد قيم افتراضية شخصية — كل قيمة يجب تمريرها صراحة.
+
+### 4.8.4 Goal
+
+`data class Goal` يحتوي: `goalId`, `userId`, `primaryGoal` (enum من 6 قيم: Weight Gain, Weight
+Loss, Muscle Building, Strength, Maintenance, General Fitness)، `targetWeightKg` (nullable)،
+`goalStartDate`/`targetDate` (كـ epoch-day `Long`، لتجنّب اعتماد `java.time` أو أي نوع Android
+داخل الـ domain)، و`secondaryGoals` (قائمة أهداف إضافية).
+
+يحتوي دالة `isTargetWeightApplicable()` (ودالة مصاحبة في الـ companion object) توضّح صراحة أن
+`targetWeightKg` منطقي فقط لأهداف معينة (Weight Gain/Loss/Muscle Building) وليس لكل الأهداف.
+التحقق يشمل: IDs غير فارغة، `targetDate >= goalStartDate` عند وجودها، عدم تكرار `primaryGoal`
+داخل `secondaryGoals`.
+
+### 4.8.5 UserPreferences
+
+`data class UserPreferences` يحتوي: `workoutLocation`, `preferredWorkoutDays`/`restDays` (كـ
+`Set<Weekday>`, مع تحقق أنهما غير متقاطعين)، `preferredWorkoutTime` (`TimeOfDay?`),
+`availableEquipment` (قائمة نصوص بسيطة — تصنيف كامل للمعدات مؤجّل لميزة Workout مستقبلًا),
+`preferredMealCount` (بتحقق ضمن مدى منطقي)، `sleepTime`/`wakeTime` (`TimeOfDay?`),
+`budgetLevel`, `enabledSupplements` (قائمة نصوص)، `reminderPreferences`
+(`ReminderPreferences` — نموذج فرعي صغير لتفعيل/تعطيل كل نوع تذكير)، و`unitSystem`.
+
+### 4.8.6 قواعد التصميم المتبعة في كل النماذج
+
+- **Immutable بالكامل:** كل نموذج هو `data class` بخصائص `val` فقط — لا يوجد `var` واحد في
+  كامل حزمة `domain.model`.
+- **بدون أي اعتماد على Android/Room/DataStore/Hilt:** تم التحقق آليًا (بحث عن `import android`,
+  `import androidx`, وكلمات Room/DataStore/Dagger/Hilt) — لا يوجد أي استخدام فعلي، فقط إشارات
+  توثيقية داخل التعليقات تشرح هذا القيد نفسه.
+- **بدون بيانات شخصية Hardcoded:** لا قيمة افتراضية لعمر/وزن/طول/اسم محدد. الأمثلة الوحيدة
+  لقيم رقمية هي داخل ملفات الاختبار (`src/test`)، وهي بيانات اختبار وليست بيانات إنتاج.
+- **جاهزة لدعم مستخدمين متعددين مستقبلًا:** كل نموذج يحمل `userId` (و`Goal` يحمل أيضًا
+  `goalId` منفصل)، تمهيدًا لدعم ملفات محلية متعددة، تسجيل دخول، ومزامنة سحابية لاحقًا — دون أي
+  تنفيذ فعلي لهذه الميزات الآن.
+- **Value types عند الحاجة فقط:** `TimeOfDay` أُضيف كنوع صغير مستقل عن المنصة لتمثيل وقت اليوم
+  (بدل الاعتماد على نوع Android أو java.time)، لكن لم تُنشأ عشرات الـ wrapper classes بدون
+  فائدة حقيقية — بقية الحقول (مثل `availableEquipment`, `enabledSupplements`) بقيت كقوائم
+  نصوص بسيطة لأن تصنيفها الكامل هو مسؤولية ميزة مستقبلية، وليس هذه المرحلة التأسيسية.
+
+### 4.8.7 اختبارات الوحدة (Unit Tests) المُضافة
+
+داخل `app/src/test/java/com/gym/app/domain/model/`:
+
+```
+UserProfileTest.kt       — قيم صالحة/غير صالحة للعمر والطول والوزن، nullable gender،
+                           سلوك immutability عبر copy()
+GoalTest.kt               — قيم صالحة/غير صالحة، isTargetWeightApplicable لكل الأهداف،
+                           ترتيب التواريخ، تكرار primaryGoal في secondaryGoals
+UserPreferencesTest.kt    — تقاطع أيام التمرين/الراحة، مدى عدد الوجبات، قيم زمنية nullable،
+                           reminderPreferences الافتراضية
+TimeOfDayTest.kt          — حدود الساعة/الدقيقة، ofOrNull()
+```
+
+لم تُضَف اختبارات بلا فائدة حقيقية (لا اختبارات "تعبئة" لمجرد زيادة العدد).
+
+### 4.8.8 لم يتم تنفيذه في 01D (بالتصميم)
+
+لا Room، لا DataStore، لا Entities، لا DAOs، لا Repositories، لا Mappers، لا أي UI
+(Onboarding/Profile)، لا منطق Home/Workout/Nutrition/Recovery حقيقي، لا ربط Hilt لهذه
+النماذج بعد (سيأتي عند تنفيذ الـ Repositories في مرحلة لاحقة بعد 01E).
+
+---
+
+## 4.9 أساس قاعدة بيانات Room (Room Database Foundation) — جديد في 01E
+
+### 4.9.1 نظرة عامة
+
+تمت إضافة تخزين فعلي عبر Room للنماذج المركزية الثلاثة (User Profile + Goal + Preferences)
+المُعرَّفة في 01D. هذه المرحلة تخزين فقط: لا DataStore، لا Onboarding UI، لا Repositories
+حقيقية، لا أي منطق ميزة. الهدف الوحيد: إثبات أن كل نموذج domain يمكن حفظه وقراءته بشكل صحيح
+عبر SQLite (من خلال Room)، مع الحفاظ على النماذج نفسها نقية تمامًا دون أي Room annotation.
+
+### 4.9.2 Gradle Dependencies
+
+في `app/build.gradle.kts`:
+
+- `androidx.room:room-runtime:2.6.1`
+- `androidx.room:room-ktx:2.6.1`
+- `kapt("androidx.room:room-compiler:2.6.1")`
+- `androidx.room:room-testing:2.6.1` (androidTestImplementation، لاختبارات قاعدة البيانات
+  المُدمَجة)
+- `org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3` (test و androidTest، لدعم `runTest`)
+
+**سبب اختيار Room 2.6.1 تحديدًا:** آخر خط إصدارات Room المبني بشكل ناضج وموثّق حول `kapt`
+(وليس K2/KSP فقط)، متوافق تمامًا مع Kotlin 1.9.24، AGP 8.5.2، وHilt 2.51.1 الحاليين — لا حاجة
+لأي ترقية غير متعلقة بهذه المرحلة (لا لـ Kotlin، لا لـ AGP، لا لـ Hilt).
+
+`versionName` تم رفعه إلى `"0.4.0-phase01e"`.
+
+### 4.9.3 الملفات والمسارات
+
+```
+app/src/main/java/com/gym/app/data/local/entity/UserProfileEntity.kt       (جديد)
+app/src/main/java/com/gym/app/data/local/entity/GoalEntity.kt              (جديد)
+app/src/main/java/com/gym/app/data/local/entity/UserPreferencesEntity.kt   (جديد)
+app/src/main/java/com/gym/app/data/local/converters/GoalTypeConverters.kt  (جديد)
+app/src/main/java/com/gym/app/data/local/dao/UserProfileDao.kt             (جديد)
+app/src/main/java/com/gym/app/data/local/dao/GoalDao.kt                    (جديد)
+app/src/main/java/com/gym/app/data/local/dao/UserPreferencesDao.kt         (جديد)
+app/src/main/java/com/gym/app/data/local/AppDatabase.kt                    (جديد)
+app/src/main/java/com/gym/app/core/di/DatabaseModule.kt                    (جديد)
+app/src/main/java/com/gym/app/data/mapper/UserProfileMapper.kt             (جديد)
+app/src/main/java/com/gym/app/data/mapper/GoalMapper.kt                    (جديد)
+app/src/main/java/com/gym/app/data/mapper/UserPreferencesMapper.kt         (جديد)
+
+app/src/test/java/com/gym/app/data/mapper/UserProfileMapperTest.kt         (جديد)
+app/src/test/java/com/gym/app/data/mapper/GoalMapperTest.kt                (جديد)
+app/src/test/java/com/gym/app/data/mapper/UserPreferencesMapperTest.kt     (جديد)
+app/src/androidTest/java/com/gym/app/data/local/AppDatabaseTest.kt         (جديد)
+```
+
+### 4.9.4 Entities
+
+كل Entity يطابق نموذج الـ domain المقابل حقلاً بحقل، لكنه نوع منفصل تمامًا:
+
+- **`UserProfileEntity`** — `@PrimaryKey val userId: String` (بدون autogenerate، لأن `userId`
+  هو الهوية المستقرة للنموذج بالفعل). `gender`, `experienceLevel`, `activityLevel` تُخزَّن
+  كـ `String` (اسم الـ enum عبر `.name`) بدل ordinal، لتفادي تلف البيانات المخزَّنة عند إعادة
+  ترتيب أي enum مستقبلًا.
+- **`GoalEntity`** — `@PrimaryKey val goalId: String`، مع `@Index` على `userId` (بدون foreign
+  key صارم بعد — ذلك سيفرض قاعدة ملكية/عدد أهداف لكل مستخدم لم تُطلب في هذه المرحلة التأسيسية).
+  `secondaryGoals` (`List<String>`) يُخزَّن كعمود نصي واحد مفصول بفواصل عبر
+  `GoalTypeConverters`.
+- **`UserPreferencesEntity`** — `@PrimaryKey val userId: String` (صف واحد لكل مستخدم حاليًا،
+  يطابق استخدام النموذج الفعلي اليوم). المجموعات (`preferredWorkoutDays`, `restDays`,
+  `availableEquipment`, `enabledSupplements`) تُخزَّن كأعمدة نصية مفصولة بفواصل. كل `TimeOfDay?`
+  (`preferredWorkoutTime`, `sleepTime`, `wakeTime`) يُفكَّك إلى زوج `Int?` (`...Hour`/
+  `...Minute`) بدل تشفيره كنص. `ReminderPreferences` (نموذج فرعي ثابت الشكل) يُفكَّك إلى 4
+  أعمدة `Boolean` مباشرة بدل JSON.
+
+### 4.9.5 DAOs
+
+كل DAO يحتوي فقط على العمليات الأساسية المطلوبة للأساس التخزيني:
+
+- `upsert(...)` — إدراج أو استبدال
+- `getByUserId(...)` / `getByGoalId(...)` — قراءة مرة واحدة (`suspend`)
+- `observeByUserId(...)` — مراقبة عبر `Flow`
+- `deleteByUserId(...)` / `deleteByGoalId(...)` — حذف
+
+لا توجد أي دوال استعلام إضافية غير ضرورية لهذه المرحلة.
+
+### 4.9.6 AppDatabase و DatabaseModule
+
+- **`AppDatabase`** (`app/src/main/java/com/gym/app/data/local/AppDatabase.kt`) — `@Database`
+  واحدة تضم الـ Entities الثلاثة فقط، `version = 1`، `exportSchema = false` (خيار صريح لهذه
+  المرحلة التأسيسية؛ سيُعاد النظر فيه عند الحاجة الفعلية لـ migrations).
+- **`DatabaseModule`** (`app/src/main/java/com/gym/app/core/di/DatabaseModule.kt`) — Hilt
+  module (`@Module @InstallIn(SingletonComponent::class)`) يوفّر `AppDatabase` (عبر
+  `Room.databaseBuilder`) وكل DAO، جاهزة لحقنها مباشرة في طبقة Repositories القادمة (01F). تم
+  استخدام `@Module`/`@Provides` هنا (وليس `@Inject` مباشرة) لأن `AppDatabase` لا يُبنى عبر
+  constructor عادي، بل عبر `Room.databaseBuilder`.
+
+### 4.9.7 Mappers (Domain ↔ Entity)
+
+`UserProfileMapper.kt`, `GoalMapper.kt`, `UserPreferencesMapper.kt` — دوال `toEntity()` /
+`toDomain()` كـ extension functions نقية، خارج كل من طبقة الـ domain وطبقة الـ Room تمامًا.
+**لا يوجد أي Room annotation داخل حزمة `domain.model`** — تم التحقق آليًا. النماذج المركزية لم
+تُعدَّل إطلاقًا في هذه المرحلة (تحقق بايت-لبايت مع نسخة الـ ZIP المرجعية لـ 01D).
+
+### 4.9.8 اختبارات الوحدة والاختبارات المُدمَجة (Unit + Instrumented Tests)
+
+**اختبارات الوحدة** (`app/src/test/java/com/gym/app/data/mapper/`) — لا تحتاج Android/Room
+فعليًا، تختبر فقط صحة التحويل domain ↔ entity:
+```
+UserProfileMapperTest.kt       — جولة كاملة، gender nullable، تخزين enum كـ name
+GoalMapperTest.kt               — جولة كاملة، secondaryGoals فارغة/غير فارغة، حقول nullable
+UserPreferencesMapperTest.kt    — جولة كاملة، TimeOfDay nullable، تقاطع أيام العمل/الراحة
+```
+
+**اختبار مُدمَج (Instrumented)** (`app/src/androidTest/java/com/gym/app/data/local/`) — يحتاج
+SQLite حقيقي عبر Android Test Runner، لذلك لا يمكن تشغيله في بيئة Sandbox الحالية:
+```
+AppDatabaseTest.kt — حفظ وقراءة كل Entity، الحفاظ على علاقة userId عبر الجداول الثلاثة معًا،
+                     upsert يستبدل الصف الصحيح، حذف يزيل الصف فعليًا، قراءة صف غير موجود تُرجع
+                     null
+```
+
+لم تُضَف اختبارات بلا فائدة حقيقية.
+
+### 4.9.9 لم يتم تنفيذه في 01E (بالتصميم)
+
+لا DataStore، لا Onboarding UI، لا Repositories حقيقية (فقط DAOs وMappers خام)، لا Use Cases،
+لا أي منطق Home/Workout/Nutrition/Recovery، لا تعديل على أي نموذج domain، لا بدء لأي عمل من
+Phase 01F.
+
+---
+
+## 4.10 طبقة الـ Repositories (User Repositories) — جديد في 01F
+
+### 4.10.1 نظرة عامة
+
+تمت إضافة طبقة Repositories نظيفة تفصل الـ domain (01D) تمامًا عن Room (01E). هذه الطبقة هي
+الآن الواجهة الوحيدة الموصى باستخدامها من أي ViewModel/Use Case مستقبلي للوصول إلى بيانات
+User Profile + Goal + Preferences — بدلاً من حقن DAOs مباشرة. هذه المرحلة **repositories فقط**:
+لا DataStore، لا Onboarding، لا UI، لا Use Cases، لا منطق ميزات حقيقي.
+
+### 4.10.2 الملفات والمسارات
+
+```
+app/src/main/java/com/gym/app/domain/repository/UserProfileRepository.kt       (جديد — interface)
+app/src/main/java/com/gym/app/domain/repository/GoalRepository.kt              (جديد — interface)
+app/src/main/java/com/gym/app/domain/repository/UserPreferencesRepository.kt   (جديد — interface)
+
+app/src/main/java/com/gym/app/data/repository/UserProfileRepositoryImpl.kt       (جديد)
+app/src/main/java/com/gym/app/data/repository/GoalRepositoryImpl.kt              (جديد)
+app/src/main/java/com/gym/app/data/repository/UserPreferencesRepositoryImpl.kt   (جديد)
+
+app/src/main/java/com/gym/app/core/di/RepositoryModule.kt   (جديد — Hilt @Binds module)
+
+app/src/test/java/com/gym/app/data/local/fake/FakeUserProfileDao.kt          (جديد)
+app/src/test/java/com/gym/app/data/local/fake/FakeGoalDao.kt                 (جديد)
+app/src/test/java/com/gym/app/data/local/fake/FakeUserPreferencesDao.kt      (جديد)
+
+app/src/test/java/com/gym/app/data/repository/UserProfileRepositoryImplTest.kt       (جديد)
+app/src/test/java/com/gym/app/data/repository/GoalRepositoryImplTest.kt              (جديد)
+app/src/test/java/com/gym/app/data/repository/UserPreferencesRepositoryImplTest.kt   (جديد)
+```
+
+### 4.10.3 واجهات الـ Repository (Domain Layer)
+
+كل واجهة في `domain/repository/` تُعرِّف فقط العمليات ذات المعنى الفعلي لهذه المرحلة التأسيسية،
+وتُرجِع نماذج domain نقية فقط (لا Room entities تظهر خارج `data/`):
+
+- **`UserProfileRepository`** — `observeByUserId(userId): Flow<UserProfile?>`,
+  `getByUserId(userId): UserProfile?`, `save(userProfile)`, `deleteByUserId(userId)`.
+- **`GoalRepository`** — يعكس أن المستخدم قد يملك أكثر من هدف عبر الزمن (نفس افتراض
+  `GoalDao` من 01E): `observeByUserId(userId): Flow<List<Goal>>`,
+  `getByUserId(userId): List<Goal>`, `getByGoalId(goalId): Goal?`, `save(goal)`,
+  `deleteByGoalId(goalId)`.
+- **`UserPreferencesRepository`** — صف واحد لكل مستخدم (يطابق `UserPreferencesDao`):
+  `observeByUserId(userId): Flow<UserPreferences?>`, `getByUserId(userId): UserPreferences?`,
+  `save(userPreferences)`, `deleteByUserId(userId)`.
+
+لا توجد أي دالة إضافية غير مطلوبة (لا بحث، لا فرز، لا تصفية متقدمة) — هذه مرحلة تأسيسية فقط.
+
+### 4.10.4 التنفيذات (Data Layer)
+
+كل تنفيذ (`*RepositoryImpl` في `data/repository/`) يستقبل الـ DAO المقابل له عبر الـ constructor
+(`@Inject constructor`) فقط — بدون أي منطق تحويل داخلي؛ التحويل بين domain وEntity يتم حصريًا
+عبر دوال `toEntity()`/`toDomain()` الموجودة بالفعل في `data/mapper/` منذ 01E
+(`UserProfileMapper`, `GoalMapper`, `UserPreferencesMapper`). لم تُعدَّل أي دالة Mapper موجودة،
+ولم يُضَف أي منطق تحويل جديد داخل طبقة الـ Repository نفسها.
+
+القراءة عبر `Flow` (`observeByUserId`) تُنفَّذ بتطبيق `.map { it?.toDomain() }` (أو
+`.map { list -> list.map { it.toDomain() } }` لحالة `GoalRepository`) مباشرة على الـ `Flow` الذي
+يُرجعه الـ DAO — دون أي حالة (state) إضافية أو تخزين مؤقت (caching) في هذه المرحلة.
+
+### 4.10.5 ربط Hilt (`RepositoryModule`)
+
+الملف: `app/src/main/java/com/gym/app/core/di/RepositoryModule.kt`
+
+`abstract class` بـ `@Module @InstallIn(SingletonComponent::class)` يستخدم `@Binds` (وليس
+`@Provides`) لربط كل واجهة بتنفيذها:
+
+```kotlin
+@Binds
+@Singleton
+abstract fun bindUserProfileRepository(impl: UserProfileRepositoryImpl): UserProfileRepository
+```
+
+تم اختيار `@Binds` تحديدًا لأن كل تنفيذ يملك بالفعل `constructor` معلَّم بـ `@Inject` يستقبل الـ
+DAO مباشرة (والـ DAOs نفسها متوفرة في الرسم البياني لـ Hilt عبر `DatabaseModule` من 01E) — هذا
+هو الأسلوب الأقل تعقيدًا والموصى به رسميًا لربط تنفيذ جاهز بواجهته، بعكس `@Provides` الذي كان
+سيتطلب استدعاء الـ constructor يدويًا بلا داعٍ (كما هو مستخدم في `DatabaseModule` فقط لأن
+`AppDatabase` لا يُبنى عبر constructor عادي).
+
+### 4.10.6 اختبارات الوحدة (Repository Unit Tests)
+
+بما أن المشروع لا يحتوي على أي مكتبة Mocking (لا Mockito، لا MockK) وبما أن اختبارات Room
+الحقيقية تحتاج بيئة instrumented (كما في `AppDatabaseTest` من 01E)، تم اتباع نفس الأسلوب المتبع
+فعليًا في المشروع: اختبارات وحدة بسيطة بـ JUnit 4 فقط + DAOs وهمية (fakes) في الذاكرة، دون أي
+اعتماد على Room أو Android Instrumentation:
+
+- **`FakeUserProfileDao`, `FakeGoalDao`, `FakeUserPreferencesDao`**
+  (`app/src/test/java/com/gym/app/data/local/fake/`) — تنفيذ بسيط لكل واجهة DAO باستخدام
+  `MutableStateFlow<Map<...>>` كمخزن في الذاكرة، يحاكي فقط شكل الاستعلامات الحقيقية (بدون أي
+  SQL فعلي). سلوك SQLite الفعلي مغطّى بالفعل عبر `AppDatabaseTest` (01E)، فلا داعي لتكراره هنا.
+- **`UserProfileRepositoryImplTest`, `GoalRepositoryImplTest`,
+  `UserPreferencesRepositoryImplTest`** (`app/src/test/java/com/gym/app/data/repository/`) —
+  تتحقق أن كل `*RepositoryImpl` يُفوِّض بشكل صحيح لواجهة الـ DAO، ويحوّل بشكل صحيح عبر
+  Mapper الموجود، ويحافظ على دلالات `userId`/`goalId` (بما في ذلك تعدد الأهداف لكل مستخدم في
+  حالة `Goal`): حفظ ثم قراءة، استبدال عند نفس المعرّف، المراقبة عبر `Flow` (`first()` مع
+  `runTest`)، والحذف. لم تُضَف اختبارات بلا فائدة حقيقية.
+
+### 4.10.7 لم يتم تنفيذه في 01F (بالتصميم)
+
+لا DataStore، لا Onboarding UI، لا أي شاشة UI جديدة، لا Use Cases، لا منطق ميزات حقيقي
+(Workout/Nutrition/Recovery/Home/Smart Assistant)، لا Login، لا Cloud Sync، لا تعديل على أي
+نموذج domain أو Entity أو Mapper أو DAO موجود من 01D/01E، لا بدء لأي عمل من Phase 01G.
+
+---
+
+## 5. قاعدة اللغة العربية فقط (Arabic-only Rule) — لم تتغيّر
+
+كل نص ظاهر للمستخدم يأتي حصريًا من `res/values/strings.xml` عبر `stringResource(...)`. تمت
+إضافة سلسلة عربية واحدة جديدة فقط (`start_di_status`) لعرض حالة الحقن التقني، ولا يوجد أي نص
+إنجليزي ظاهر للمستخدم. لا يوجد `res/values-ar/` ولا أي دعم لتعدد اللغات.
+
+---
+
+## 6. دعم RTL — لم يتغيّر
+
+`GymTheme` (من 01B) لا يزال يفرض `LocalLayoutDirection.Rtl` صراحة. لم يُمس شيء في هذا الجزء
+خلال 01C أو 01D (نماذج الـ domain في 01D لا علاقة لها بـ UI أو RTL إطلاقًا).
+
+---
+
+## 7. حالة Build و GitHub Actions
+
+### Phase 01A — Project Bootstrap
+✅ **مغلقة رسميًا.** GitHub Actions نجح، تم توليد الـ Debug APK بنجاح.
+
+### Phase 01B — Navigation Foundation
+✅ **مغلقة رسميًا.** GitHub Actions نجح.
+
+### Phase 01C — Dependency Injection Foundation
+✅ **مغلقة رسميًا.** GitHub Actions نجح.
+
+### Phase 01D — Core User Models
+✅ **مغلقة رسميًا.** GitHub Actions نجح.
+
+### Phase 01E — Room Database Foundation
+✅ **مغلقة رسميًا.** GitHub Actions نجح.
+
+### Phase 01F — User Repositories (هذه المرحلة)
+⏳ **لم يتم تشغيل Build أو Unit Tests فعليًا محليًا.** بيئة التنفيذ الحالية (Sandbox) لا تملك
+اتصال إنترنت، ولا Android SDK، ولا Gradle، ولا حتى Kotlin compiler (`kotlinc`) مثبت مسبقًا — تم
+التحقق من هذا فعليًا مرة أخرى قبل البدء في هذه المرحلة (نفس القيد الذي كان موجودًا في كل
+المراحل السابقة).
+
+**ما تم فعله بدلاً من Build/Test فعلي (تحقق استاتيكي):** راجع القسم "ملاحظة صادقة حول حالة
+Build لمرحلة 01F" في `PROJECT_PHASE.md` للتفاصيل الكاملة لكل خطوات التحقق الاستاتيكي المُنفَّذة
+لهذه المرحلة (توازن الأقواس، نقاء `domain.model`، مقارنة بايت-لبايت مع الملفات السابقة، عدم
+وجود DataStore/Onboarding/UI/Use Cases، إلخ).
+
+**الحالة الحقيقية في `PROJECT_PHASE.md`:** `Status: Pending GitHub Validation` — التزامًا
+بالصدق وعدم الادعاء بنجاح Build أو Tests لم يحدثا فعليًا محليًا. سيتم تأكيد النجاح بعد أول
+Push إلى main عبر GitHub Actions.
+
+---
+
+## 7.1 المشاكل المُصلَحة سابقًا (Known Fixed Issues)
+
+**هذا قسم دائم.** يجب الحفاظ عليه في كل مرحلة قادمة، وإضافة أي مشكلة مُصلَحة جديدة إليه —
+لا تُحذف أي مشكلة سابقة من هنا.
+
+### KNOWN FIX #1 — Gradle Version Mismatch (اكتُشف ومعروف منذ بداية GitHub Actions)
+
+**المشكلة:** فشل build سابق عبر GitHub Actions لأن الـ workflow استخدم إصدار Gradle غير محدَّد
+صراحةً، فاستخدم GitHub Actions تلقائيًا Gradle 9.6.1 — وهو غير متوافق مع إعداد المشروع الحالي:
+
+- Android Gradle Plugin: 8.5.2
+- Kotlin: 1.9.24
+- Gradle المطلوب: 8.7
+
+كان الخطأ يتضمن رسائل مشابهة لـ:
+`Configuration.fileCollection(org.gradle.api.specs.Spec)` و `BuildFlowServiceProperty`.
+
+**الحل:** تثبيت (pin) إصدار Gradle صراحةً إلى `8.7` داخل
+`.github/workflows/build-apk.yml`، عبر:
+
+```yaml
+- name: Setup Gradle 8.7
+  uses: gradle/actions/setup-gradle@v4
+  with:
+    gradle-version: '8.7'
+
+- name: Generate Gradle Wrapper
+  run: gradle wrapper --gradle-version 8.7 --distribution-type bin
+```
+
+**ممنوع فعله مستقبلًا (إلا بمرحلة مخصصة صريحة تتحقق من التوافق الكامل):**
+- إزالة `gradle-version: '8.7'` الصريح
+- تغييره إلى إصدار غير محدَّد (latest)
+- ترقية Gradle بمعزل عن باقي السلسلة
+- ترقية Android Gradle Plugin بمعزل عن باقي السلسلة
+- ترقية Kotlin بمعزل عن باقي السلسلة
+
+تم التحقق من هذا الإصلاح فعليًا وبنجاح عبر GitHub Actions في المراحل 01A حتى 01D، وتم الحفاظ
+عليه دون أي تغيير في 01E (تحقق بايت-لبايت، راجع القسم 4.9.2 و`PROJECT_PHASE.md`).
+
+---
+
+## 8. الملفات المُضافة في هذه المرحلة (01D)
+
+```
+app/src/main/java/com/gym/app/domain/model/UserProfile.kt         (جديد)
+app/src/main/java/com/gym/app/domain/model/Goal.kt                 (جديد)
+app/src/main/java/com/gym/app/domain/model/UserPreferences.kt      (جديد؛ يحتوي أيضًا على
+                                                                     ReminderPreferences)
+app/src/main/java/com/gym/app/domain/model/Gender.kt                (جديد)
+app/src/main/java/com/gym/app/domain/model/ExperienceLevel.kt       (جديد)
+app/src/main/java/com/gym/app/domain/model/ActivityLevel.kt         (جديد)
+app/src/main/java/com/gym/app/domain/model/PrimaryGoal.kt           (جديد)
+app/src/main/java/com/gym/app/domain/model/WorkoutLocation.kt       (جديد)
+app/src/main/java/com/gym/app/domain/model/BudgetLevel.kt           (جديد)
+app/src/main/java/com/gym/app/domain/model/UnitSystem.kt            (جديد)
+app/src/main/java/com/gym/app/domain/model/Weekday.kt               (جديد)
+app/src/main/java/com/gym/app/domain/model/TimeOfDay.kt             (جديد)
+
+app/src/test/java/com/gym/app/domain/model/UserProfileTest.kt       (جديد في 01D)
+app/src/test/java/com/gym/app/domain/model/GoalTest.kt              (جديد في 01D)
+app/src/test/java/com/gym/app/domain/model/UserPreferencesTest.kt   (جديد في 01D)
+app/src/test/java/com/gym/app/domain/model/TimeOfDayTest.kt         (جديد في 01D)
+```
+
+## 8.1 الملفات المُضافة في مرحلة 01E
+
+```
+app/src/main/java/com/gym/app/data/local/entity/UserProfileEntity.kt       (جديد)
+app/src/main/java/com/gym/app/data/local/entity/GoalEntity.kt              (جديد)
+app/src/main/java/com/gym/app/data/local/entity/UserPreferencesEntity.kt   (جديد)
+app/src/main/java/com/gym/app/data/local/converters/GoalTypeConverters.kt  (جديد)
+app/src/main/java/com/gym/app/data/local/dao/UserProfileDao.kt             (جديد)
+app/src/main/java/com/gym/app/data/local/dao/GoalDao.kt                    (جديد)
+app/src/main/java/com/gym/app/data/local/dao/UserPreferencesDao.kt         (جديد)
+app/src/main/java/com/gym/app/data/local/AppDatabase.kt                    (جديد)
+app/src/main/java/com/gym/app/core/di/DatabaseModule.kt                    (جديد)
+app/src/main/java/com/gym/app/data/mapper/UserProfileMapper.kt             (جديد)
+app/src/main/java/com/gym/app/data/mapper/GoalMapper.kt                    (جديد)
+app/src/main/java/com/gym/app/data/mapper/UserPreferencesMapper.kt         (جديد)
+
+app/src/test/java/com/gym/app/data/mapper/UserProfileMapperTest.kt         (جديد)
+app/src/test/java/com/gym/app/data/mapper/GoalMapperTest.kt                (جديد)
+app/src/test/java/com/gym/app/data/mapper/UserPreferencesMapperTest.kt     (جديد)
+app/src/androidTest/java/com/gym/app/data/local/AppDatabaseTest.kt         (جديد)
+```
+
+## 8.2 الملفات المُضافة في مرحلة 01F
+
+```
+app/src/main/java/com/gym/app/domain/repository/UserProfileRepository.kt       (جديد)
+app/src/main/java/com/gym/app/domain/repository/GoalRepository.kt              (جديد)
+app/src/main/java/com/gym/app/domain/repository/UserPreferencesRepository.kt   (جديد)
+
+app/src/main/java/com/gym/app/data/repository/UserProfileRepositoryImpl.kt       (جديد)
+app/src/main/java/com/gym/app/data/repository/GoalRepositoryImpl.kt              (جديد)
+app/src/main/java/com/gym/app/data/repository/UserPreferencesRepositoryImpl.kt   (جديد)
+
+app/src/main/java/com/gym/app/core/di/RepositoryModule.kt   (جديد)
+
+app/src/test/java/com/gym/app/data/local/fake/FakeUserProfileDao.kt          (جديد)
+app/src/test/java/com/gym/app/data/local/fake/FakeGoalDao.kt                 (جديد)
+app/src/test/java/com/gym/app/data/local/fake/FakeUserPreferencesDao.kt      (جديد)
+
+app/src/test/java/com/gym/app/data/repository/UserProfileRepositoryImplTest.kt       (جديد)
+app/src/test/java/com/gym/app/data/repository/GoalRepositoryImplTest.kt              (جديد)
+app/src/test/java/com/gym/app/data/repository/UserPreferencesRepositoryImplTest.kt   (جديد)
+```
+
+## 9. الملفات المُعدَّلة في مرحلة 01D
+
+```
+PROJECT_PHASE.md, PROJECT_HANDOFF.md, NEXT_TASK.md — تحديث التوثيق فقط
+```
+
+**لم يتم لمس أي ملف كود مصدري آخر في 01D.** تحديدًا: `settings.gradle.kts`, `gradle.properties`,
+`gradle/wrapper/*`, `gradlew`, `gradlew.bat`, `.gitignore`, `build.gradle.kts` (root),
+`app/build.gradle.kts`, `.github/workflows/build-apk.yml`, `app/proguard-rules.pro`,
+`AndroidManifest.xml`, `strings.xml`, `themes.xml`, أيقونة `ic_launcher.xml`, `Routes.kt`,
+`AppNavHost.kt`, `Theme.kt`, `GymApplication.kt`, `MainActivity.kt`,
+`core/di/AppInfoProvider.kt`, `StartViewModel.kt`, `StartScreen.kt`, وأي من شاشات
+Home/Workout/Progress/Settings. تم التحقق من هذا بمقارنة بايت-لبايت مع الـ ZIP المرجعي
+لمرحلة 01C.
+
+## 9.1 الملفات المُعدَّلة في مرحلة 01E
+
+```
+app/build.gradle.kts   — إضافة Room dependencies فقط (runtime, ktx, kapt compiler, testing,
+                          coroutines-test) ورفع versionName إلى "0.4.0-phase01e". لم يُمس أي
+                          سطر آخر (Compose, Hilt, Navigation, compileSdk/minSdk/targetSdk,
+                          kotlinOptions, compose Options, إلخ — كلها كما هي بالضبط).
+PROJECT_PHASE.md, PROJECT_HANDOFF.md, NEXT_TASK.md — تحديث التوثيق
+```
+
+**لم يتم لمس أي ملف آخر في 01E.** تحديدًا: `build.gradle.kts` (root)،
+`.github/workflows/build-apk.yml` (لا يزال مثبَّتًا على `gradle-version: '8.7'`)،
+`settings.gradle.kts`, `gradle.properties`, `gradle/wrapper/*`, `gradlew`, `gradlew.bat`,
+`.gitignore`, كل ملفات `domain/model/` (تحقق بايت-لبايت)، `navigation/`, `ui/`,
+`GymApplication.kt`, `MainActivity.kt`, `core/di/AppInfoProvider.kt`. تم التحقق من هذا بمقارنة
+بايت-لبايت مع الـ ZIP المرجعي لمرحلة 01D (راجع "ملاحظة صادقة حول حالة Build لمرحلة 01E" في
+`PROJECT_PHASE.md`).
+
+## 9.2 الملفات المُعدَّلة في مرحلة 01F
+
+```
+app/build.gradle.kts   — رفع versionName فقط إلى "0.5.0-phase01f". سطر واحد فقط تغيَّر
+                          (تحقق diff فعلي، راجع الملاحظة الصادقة أدناه). لم تُضَف أي
+                          dependency جديدة — طبقة الـ Repositories تعتمد حصريًا على
+                          Room/Hilt/Coroutines الموجودة بالفعل منذ 01C/01E.
+PROJECT_PHASE.md, PROJECT_HANDOFF.md, NEXT_TASK.md — تحديث التوثيق
+```
+
+**لم يتم لمس أي ملف آخر في 01F.** تحديدًا: `build.gradle.kts` (root)،
+`.github/workflows/build-apk.yml` (إن وُجد لاحقًا — لا يزال يجب أن يبقى مثبَّتًا على
+`gradle-version: '8.7'`)، `settings.gradle.kts`, `gradle.properties`, `gradle/wrapper/*`,
+`gradlew`, `gradlew.bat`, `.gitignore`، كل ملفات `domain/model/` (تحقق بايت-لبايت)، كل ملفات
+`data/local/entity/`, `data/local/dao/`, `data/local/converters/`, `data/local/AppDatabase.kt`,
+`data/mapper/` (تحقق بايت-لبايت — لم يُعدَّل أي Mapper موجود)، `core/di/DatabaseModule.kt`,
+`core/di/AppInfoProvider.kt`, `navigation/`, `ui/`, `GymApplication.kt`, `MainActivity.kt`.
+تم التحقق من هذا بمقارنة بايت-لبايت مع الـ ZIP المرجعي لمرحلة 01E (راجع "ملاحظة صادقة حول حالة
+Build لمرحلة 01F" في `PROJECT_PHASE.md`) — الفرق الوحيد المكتشف في كامل المشروع هو سطر
+`versionName` في `app/build.gradle.kts`.
+
+---
+
+## 10. قاعدة معمارية المنتج المستقبلية — النماذج أصبح لها Repositories الآن (01F)
+
+بنية المنتج الكاملة مستقبلًا تعتمد جوهريًا على:
+
+**User Profile + Goal + Preferences**
+
+✅ منذ Phase 01D، هذه النماذج الثلاثة موجودة فعليًا كـ domain models نقية في
+`app/src/main/java/com/gym/app/domain/model/` (راجع القسم 4.8). ✅ منذ Phase 01E، أصبح لهذه
+النماذج تخزين فعلي عبر Room (Entities + DAOs + AppDatabase + Mappers، راجع القسم 4.9)، متاح
+للحقن عبر Hilt (`DatabaseModule`). ✅ منذ Phase 01F، أصبحت هذه النماذج قابلة للوصول عبر طبقة
+Repositories نظيفة (`domain/repository/` + `data/repository/` + `RepositoryModule`، راجع
+القسم 4.10) تفصل الـ domain تمامًا عن Room. كل ميزة مستقبلية يجب أن **تقرأ** بياناتها الخاصة
+بالمستخدم من هذه الـ Repositories — عبر حقن `UserProfileRepository`/`GoalRepository`/
+`UserPreferencesRepository` (لا الـ DAOs مباشرة، ولا الـ Entities) — بدلاً من استخدام بيانات
+ثابتة معزولة أو حالة مستخدم مكررة في كل ميزة على حدة. أمثلة:
+
+- **Workout** سيعتمد على: User Profile + Goal + Preferences
+- **Nutrition** سيعتمد على: User Profile + Goal + Preferences
+- **Recovery** سيعتمد على: User Profile + Preferences + سجل التمارين + سجل النوم + سجل الألم
+- **Home** سيجمّع (aggregate) معلومات من ميزات مختلفة للمستخدم النشط الحالي
+
+⚠️ **مهم:** طبقة الـ Repositories نفسها موجودة الآن (01F)، لكن **لا Use Cases بعد** تُنسِّق منطق
+ميزات حقيقي فوقها، ولا DataStore بعد لتفضيلات لا تخص Room (مثل حالة onboarding نفسها) — ذلك
+سيأتي في مراحل لاحقة (Phase 01G — DataStore Foundation، ثم مراحل الميزات الفعلية).
+
+---
+
+## 11. ما لم يتم تنفيذه (بالتصميم — ممنوع حتى الآن)
+
+- [x] ~~Hilt~~ — تم في 01C (أساس فقط، بدون Repositories حقيقية)
+- [x] ~~User Profile (Model)~~ — تم في 01D (domain model فقط، بدون تخزين)
+- [x] ~~Goal (Model)~~ — تم في 01D (domain model فقط، بدون تخزين)
+- [x] ~~Preferences (Model)~~ — تم في 01D (domain model فقط، بدون تخزين)
+- [x] ~~Room / Database~~ — تم في 01E (Entities + DAOs + AppDatabase + Mappers، بدون
+      Repositories حقيقية بعد)
+- [x] ~~Repositories حقيقية~~ — تم في 01F (تربط الـ domain بـ Room بشكل نظيف عبر
+      `domain/repository/` + `data/repository/` + Hilt `@Binds`، بدون Use Cases بعد)
+- [ ] DataStore
+- [ ] Use Cases (تنسيق منطق ميزات حقيقي فوق الـ Repositories)
+- [ ] Onboarding
+- [ ] أي منطق Workout / Nutrition / Smart Assistant حقيقي
+- [ ] Login / Cloud Sync
+- [ ] دعم لغات متعددة أو تبديل لغة
+- [ ] أي بيانات مستخدم وهمية (Fake user data) أو معلومات شخصية Hardcoded
+- [ ] تشغيل Build/Test فعلي ناجح داخل بيئة Sandbox (سيتم التحقق عبر GitHub Actions)
+- [ ] أي عمل من Phase 01G
+
+---
+
+## 12. قواعد للمطوّر/المرحلة التالية (Rules for the Next Developer)
+
+1. **لا تعيد بناء المشروع من الصفر.** هذا المستودع على GitHub هو مصدر الحقيقة الوحيد بين
+   المراحل والجلسات المستقبلية.
+2. **لا تحذف أو تستبدل** أي ميزة تعمل حاليًا (Gradle setup, Workflow, بنية التنقل, أساس
+   الحقن, نماذج الـ domain, أساس Room, طبقة الـ Repositories) إلا إذا طُلب ذلك صراحة.
+3. **لا تُدرِج أي بيانات مستخدم Hardcoded** في أي مكان — كل بيانات المستخدم الحقيقية يجب أن
+   تأتي لاحقًا من النموذج المركزي (User Profile + Goal + Preferences، الموجود الآن في
+   `domain/model/` مع تخزين Room في `data/local/` وطبقة Repositories في `domain/repository/`
+   و`data/repository/`) عبر طبقة الحقن، وليس من قيم ثابتة داخل الكود.
+4. **كل نص ظاهر للمستخدم يجب أن يكون عربيًا فقط** عبر `res/values/strings.xml` — ممنوع أي
+   نص Hardcoded داخل ملفات Kotlin.
+5. **لا تُنشئ** `res/values-ar/strings.xml` أو أي مجلد لغة إضافي.
+6. **لا تُضِف DataStore قبل مرحلتها المخصصة.** أساس Room (01E) وطبقة الـ Repositories (01F)
+   موجودان الآن، لكن DataStore لا يزال خارج النطاق حتى تُطلَب صراحةً (Phase 01G).
+7. **حافظ على نماذج الـ domain نقية:** لا Room annotations، لا DataStore، لا Android
+   framework types، لا Hilt داخل حزمة `domain.model` — التحويل من/إلى Room يتم حصريًا عبر
+   `data/mapper/` (راجع القسم 4.9.7)، ليس داخل النماذج نفسها. كذلك حافظ على واجهات
+   `domain/repository/` نقية: لا Room entities ولا Hilt annotations تظهر في توقيعات هذه
+   الواجهات، فقط نماذج domain وFlow/suspend من Kotlin/Coroutines.
+8. **GitHub يبقى مصدر الحقيقة (Source of Truth)** — لا تدّعِ نجاح Build أو Tests إلا بعد تأكيد
+   فعلي عبر GitHub Actions أو تنفيذ محلي حقيقي.
+9. **لا تبدأ أي مرحلة تالية** (مثل 01G) دون طلب صريح من المستخدم.
+10. **حافظ على قسم "المشاكل المُصلَحة سابقًا" (Known Fixed Issues، القسم 7.1) دائمًا** — لا
+    تحذف أي عنصر منه، وأضِف أي مشكلة جديدة تُكتشف وتُصلَح إلى نفس القسم.
+11. **استخدم الـ Repositories (`domain/repository/`) دائمًا من أي ViewModel/Use Case مستقبلي
+    — لا الـ DAOs مباشرة.** طبقة الـ Repositories (01F) هي الآن الحد الفاصل الرسمي بين طبقة
+    البيانات (Room) وأي طبقة أعلى.
